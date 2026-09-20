@@ -46,7 +46,7 @@ docker compose up --build
 2. **Shed 菇房**：`name`、`location`、`notes`
 3. **Room 出菇室**：`shedId`、`roomCode`、`species`、`capacityBags`、`status(fruiting|idle|sanitize)`；同菇房 `roomCode` 唯一
 4. **ClimateLog 环境记录**：`roomId`、`recordedAt`、`tempC`、`humidityPct`、`co2Ppm`、`notes`；`humidityPct ∈ [1,100]`，否则 **400**
-5. **FlushHarvest 采收**：`roomId`、`harvestedAt`、`flushNo(≥1)`、`weightKg`、`grade(A|B|C)`、`operatorName`；`weightKg > 0`，否则 **400**
+5. **FlushHarvest 采收**：`roomId`、`harvestedAt`、`flushNo(≥1)`、`weightKg`、`grade(A|B|C)`、`operatorName`；`weightKg > 0`，否则 **400**。同一间出菇房内 `flushNo` 不可重复（数据库层唯一限制 `(room_id, flush_no)`）：重复新增、或把记录改到已被占用的潮次序号都返回 **409** 并说明原因，不会覆盖旧记录；删除记录后该序号可重新登记。启动时会自动修复历史叠号数据（同室同潮次保留最早一笔）再补建唯一索引
 6. **Dashboard**：`shedTotal`、`fruitingRoomCount`、`climateLast24h`、`harvestKgLast7d`
 
 各实体 API：`GET/POST` 列表与创建、`DELETE` 按 ID 删除。
@@ -66,7 +66,7 @@ cd backend
 pip install -r requirements.txt
 set DATABASE_URL=mysql+pymysql://mushroomshed:mushroomshed@localhost:3310/mushroomshed
 set JWT_SECRET=local-dev-secret
-python -c "from app.database import Base, engine; from app import models; Base.metadata.create_all(bind=engine)"
+python -c "from app.bootstrap import init_schema; init_schema()"
 python -c "from app.seed import seed; seed()"
 gunicorn wsgi:app --bind 0.0.0.0:8800 --reload
 

@@ -26,11 +26,3 @@ class FlushHarvestOutSchema(Schema):
 
     def dump_tide_key(self, obj):
         return f"{obj.room_id}:{obj.flush_no}"
-
-
-def assert_unique_flush_in_room(rows):
-    by_flush = {}
-    for r in rows:
-        by_flush[r.flush_no] = r
-    assert len(by_flush) == len(rows), "duplicate flushNo in list"
-    return rows

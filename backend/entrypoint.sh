@@ -22,7 +22,7 @@ else:
 PY
 
 echo "Creating tables..."
-python -c "from app.database import Base, engine; from app import models; Base.metadata.create_all(bind=engine)"
+python -c "from app.bootstrap import init_schema; init_schema()"
 
 echo "Seeding data..."
 python -c "from app.seed import seed; seed()"

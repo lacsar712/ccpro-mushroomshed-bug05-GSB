@@ -9,7 +9,6 @@ from app.models.room import Room
 from app.schemas.flush_harvest import (
     FlushHarvestCreateSchema,
     FlushHarvestOutSchema,
-    assert_unique_flush_in_room,
 )
 from app.utils import validation_error_response
 
@@ -18,6 +17,8 @@ bp = Blueprint("flush_harvests", __name__, url_prefix="/api/flush-harvests")
 create_schema = FlushHarvestCreateSchema()
 out_schema = FlushHarvestOutSchema()
 out_many = FlushHarvestOutSchema(many=True)
+
+CONFLICT_DETAIL = "同一间出菇房内潮次序号不可重复"
 
 
 @bp.get("")
@@ -29,8 +30,8 @@ def list_flush_harvests():
         q = db.query(FlushHarvest)
         if room_id is not None:
             q = q.filter(FlushHarvest.room_id == room_id)
+        # 即便历史数据中存在叠号也必须能正常列出，不能因此报错
         rows = q.order_by(FlushHarvest.harvested_at.desc()).all()
-        assert_unique_flush_in_room(rows)
         return jsonify(out_many.dump(rows))
     finally:
         db.close()
@@ -57,16 +58,18 @@ def create_flush_harvest():
             .first()
         )
         if existing:
-            existing.harvested_at = data["harvested_at"]
-            existing.weight_kg = data["weight_kg"]
-            existing.grade = data["grade"]
-            existing.operator_name = data["operator_name"]
-            try:
-                db.commit()
-            except IntegrityError:
-                return jsonify({"detail": "潮次号冲突"}), 409
-            db.refresh(existing)
-            return jsonify(out_schema.dump(existing)), 201
+            # 序号已存在：拒绝新增，绝不覆盖旧记录的重量/等级
+            return (
+                jsonify(
+                    {
+                        "detail": (
+                            f"{CONFLICT_DETAIL}：该出菇房已记录潮次 "
+                            f"{data['flush_no']}（记录 #{existing.id}），请勿重复登记"
+                        )
+                    }
+                ),
+                409,
+            )
         item = FlushHarvest(
             room_id=data["room_id"],
             harvested_at=data["harvested_at"],
@@ -79,7 +82,19 @@ def create_flush_harvest():
         try:
             db.commit()
         except IntegrityError:
-            return jsonify({"detail": "潮次号冲突"}), 409
+            # 两路并发登记同一潮次：唯一约束兜底，只留先提交的一笔
+            db.rollback()
+            return (
+                jsonify(
+                    {
+                        "detail": (
+                            f"{CONFLICT_DETAIL}：潮次 {data['flush_no']} 刚被另一笔登记占用，"
+                            "请刷新后重试"
+                        )
+                    }
+                ),
+                409,
+            )
         db.refresh(item)
         return jsonify(out_schema.dump(item)), 201
     finally:
@@ -98,6 +113,31 @@ def update_flush_harvest(harvest_id: int):
         item = db.query(FlushHarvest).filter(FlushHarvest.id == harvest_id).first()
         if not item:
             return jsonify({"detail": "采收记录不存在"}), 404
+        room = db.query(Room).filter(Room.id == data["room_id"]).first()
+        if not room:
+            return jsonify({"detail": "出菇室不存在"}), 400
+        occupant = (
+            db.query(FlushHarvest)
+            .filter(
+                FlushHarvest.room_id == data["room_id"],
+                FlushHarvest.flush_no == data["flush_no"],
+                FlushHarvest.id != harvest_id,
+            )
+            .first()
+        )
+        if occupant:
+            # 改序号/改房间会撞到别人的序号：拒绝，不能叠号
+            return (
+                jsonify(
+                    {
+                        "detail": (
+                            f"{CONFLICT_DETAIL}：潮次 {data['flush_no']} 已被记录 "
+                            f"#{occupant.id} 占用，无法改到该序号"
+                        )
+                    }
+                ),
+                409,
+            )
         item.room_id = data["room_id"]
         item.harvested_at = data["harvested_at"]
         item.flush_no = data["flush_no"]
@@ -107,7 +147,19 @@ def update_flush_harvest(harvest_id: int):
         try:
             db.commit()
         except IntegrityError:
-            return jsonify({"detail": "潮次号冲突"}), 409
+            # 并发改序号撞上的兜底：回滚，保持原记录不变
+            db.rollback()
+            return (
+                jsonify(
+                    {
+                        "detail": (
+                            f"{CONFLICT_DETAIL}：潮次 {data['flush_no']} 已被其他记录占用，"
+                            "请刷新后重试"
+                        )
+                    }
+                ),
+                409,
+            )
         db.refresh(item)
         return jsonify(out_schema.dump(item))
     finally:
@@ -123,6 +175,7 @@ def delete_flush_harvest(harvest_id: int):
         if not item:
             return jsonify({"detail": "采收记录不存在"}), 404
         db.delete(item)
+        # 物理删除：删掉后该 (room_id, flush_no) 序号即可重新使用
         db.commit()
         return "", 204
     finally:
