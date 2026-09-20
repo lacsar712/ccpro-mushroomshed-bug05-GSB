@@ -3,6 +3,7 @@ from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 
 from app.config import settings
+from app.migrations import ensure_flush_unique_index
 from app.routes import auth, climate_logs, dashboard, flush_harvests, rooms, sheds
 
 
@@ -13,6 +14,9 @@ def create_app() -> Flask:
 
     CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
     JWTManager(app)
+
+    # 旧库没有唯一索引，启动时补建（含历史叠号去重）；幂等
+    ensure_flush_unique_index()
 
     app.register_blueprint(auth.bp)
     app.register_blueprint(sheds.bp)

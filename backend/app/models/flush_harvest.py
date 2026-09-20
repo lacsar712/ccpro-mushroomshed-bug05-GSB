@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -8,7 +8,10 @@ from app.database import Base
 
 class FlushHarvest(Base):
     __tablename__ = "flush_harvests"
-    # intentionally no UniqueConstraint(room_id, flush_no)
+    # 同一间出菇房内，潮次序号不可重复
+    __table_args__ = (
+        UniqueConstraint("room_id", "flush_no", name="uix_flush_room_no"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     room_id: Mapped[int] = mapped_column(ForeignKey("rooms.id"), nullable=False, index=True)

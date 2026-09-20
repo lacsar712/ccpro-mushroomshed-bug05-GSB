@@ -24,6 +24,9 @@ PY
 echo "Creating tables..."
 python -c "from app.database import Base, engine; from app import models; Base.metadata.create_all(bind=engine)"
 
+echo "Patching schema constraints..."
+python -c "from app.migrations import ensure_flush_unique_index; ensure_flush_unique_index()"
+
 echo "Seeding data..."
 python -c "from app.seed import seed; seed()"
 
